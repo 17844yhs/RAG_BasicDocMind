@@ -25,22 +25,34 @@ AUTH_CODE = os.environ.get("QQ_SMTP_AUTH_CODE")
 if not AUTH_CODE:
     raise ValueError("缺少 QQ_SMTP_AUTH_CODE 环境变量")
 
-# 搜索关键词（覆盖 Agent / Skills / MCP 三大方向）
+# 搜索关键词（覆盖 Agent / MCP / Skills / Python / 总榜）
 SEARCH_QUERIES = [
-    # Agent 框架
+    # ===== Agent 框架 =====
     "topic:ai-agent",
     "topic:agent-framework sort:stars",
     "agent framework llm",
-    # MCP
+    # ===== MCP =====
     "topic:mcp-server sort:stars",
     "mcp server model-context-protocol",
     "mcp tool ai",
-    # Skills
+    # ===== Skills =====
     "claude code skills sort:stars",
     "agent skills ai coding",
-    # 热门综合
+    # ===== Agent 热门综合 =====
     "ai agent sort:stars",
     "llm agent tool",
+    # ===== Python 热门（新增） =====
+    "topic:python sort:stars",
+    "python framework stars:>5000",
+    "python tools stars:>3000",
+    "topic:fastapi sort:stars",
+    "python async stars:>2000",
+    # ===== GitHub 总榜热门（新增） =====
+    "stars:>10000 pushed:>2026-06-01",
+    "topic:hacktoberfest sort:stars",
+    "topic:open-source sort:stars",
+    "stars:>5000 pushed:>2026-07-01",
+    "topic:github-trending sort:stars",
 ]
 
 # 本周一零点（UTC）
@@ -80,24 +92,39 @@ def fetch_trending_topic(topic: str, limit: int = 8):
 
 # ==================== 构建邮件 ====================
 def categorize_repo(repo: dict) -> str:
-    """给仓库打标签：Agent / MCP / Skills / Other"""
+    """给仓库打标签：Agent / MCP / Skills / Python / Hot / Other"""
     topics = [t.lower() for t in repo.get("topics", [])]
     desc = (repo.get("description") or "").lower()
     name = repo["full_name"].lower()
 
-    if "mcp" in topics or "mcp-server" in topics or "mcp" in name:
-        return "MCP"
-    if "skill" in topics or "skills" in topics or "claude-code" in topics:
-        return "Skills"
+    # Agent 优先（命中 return）
     if "agent" in topics or "ai-agent" in topics or "agent-framework" in topics:
         return "Agent"
-    if any(kw in desc for kw in ["mcp", "model context protocol", "claude code"]):
-        return "MCP"
-    if any(kw in desc for kw in ["skill", "agent skill"]):
-        return "Skills"
     if any(kw in desc for kw in ["agent", "autonomous", "ai agent"]):
         return "Agent"
-    return "Other"
+    # MCP
+    if "mcp" in topics or "mcp-server" in topics or "mcp" in name:
+        return "MCP"
+    if any(kw in desc for kw in ["mcp", "model context protocol"]):
+        return "MCP"
+    # Skills
+    if "skill" in topics or "skills" in topics or "claude-code" in topics:
+        return "Skills"
+    if any(kw in desc for kw in ["skill", "claude code"]):
+        return "Skills"
+    # Python
+    lang = repo.get("language") or ""
+    if lang.lower() == "python" and repo["stargazers_count"] > 1000:
+        if any(kw in desc for kw in ["python", "fastapi", "django", "flask", "pytest",
+                                      "asyncio", "pydantic", "uvicorn", "sqlalchemy"]):
+            return "Python"
+        if "python" in topics or "fastapi" in topics or "django" in topics:
+            return "Python"
+        # 高星纯 Python 项目也归入 Python 类
+        if repo["stargazers_count"] > 5000:
+            return "Python"
+    # 其他（总榜热门）
+    return "Hot"
 
 
 def build_html() -> str:
@@ -123,10 +150,13 @@ def build_html() -> str:
     sorted_repos = sorted(all_repos.values(), key=lambda r: r["stargazers_count"], reverse=True)
 
     # 分类
-    categories = {"Agent": [], "MCP": [], "Skills": [], "Other": []}
+    categories = {"Agent": [], "MCP": [], "Skills": [], "Python": [], "Hot": []}
     for r in sorted_repos:
         cat = r["_cat"]
-        categories[cat].append(r)
+        if cat in categories:
+            categories[cat].append(r)
+        else:
+            categories["Hot"].append(r)
 
     print(f"  共抓取 {len(sorted_repos)} 个仓库")
     for cat, repos in categories.items():
@@ -142,13 +172,14 @@ def build_html() -> str:
 <head><meta charset="utf-8"></head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 720px; margin: 0 auto; padding: 20px; color: #1a1a1a;">
 <div style="text-align: center; margin-bottom: 32px;">
-    <h1 style="font-size: 24px; margin: 0; letter-spacing: 1px;">📡 GitHub Agent 开发周报</h1>
+    <h1 style="font-size: 24px; margin: 0; letter-spacing: 1px;">📡 GitHub 开发周报</h1>
+    <p style="color: #888; font-size: 12px; margin-top: 4px;">🤖 Agent · 🔌 MCP · 🧠 Skills · 🐍 Python · 🔥 总榜</p>
     <p style="color: #666; font-size: 13px; margin-top: 6px;">{week_str}  ·  数据更新至 {now_str}</p>
 </div>
 """)
 
     section_index = 0
-    for cat_name, cat_label in [("Agent", "🤖 Agent 框架"), ("MCP", "🔌 MCP 服务器"), ("Skills", "🧠 Skills 技能"), ("Other", "📦 其他相关")]:
+    for cat_name, cat_label in [("Agent", "🤖 Agent 框架"), ("MCP", "🔌 MCP 服务器"), ("Skills", "🧠 Skills 技能"), ("Python", "🐍 Python 热门"), ("Hot", "🔥 GitHub 总榜")]:
         repos = categories[cat_name]
         if not repos:
             continue
@@ -203,7 +234,7 @@ def build_html() -> str:
 def send_email(html: str):
     """通过 QQ 邮箱 SMTP 发送 HTML 邮件"""
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"📡 GitHub Agent 开发周报 ({datetime.now(timezone.utc).strftime('%m/%d')})"
+    msg["Subject"] = f"📡 GitHub 开发周报 (Agent/Python/总榜 · {datetime.now(timezone.utc).strftime('%m/%d')})"
     msg["From"] = SENDER
     msg["To"] = RECEIVER
     msg.attach(MIMEText(html, "html", "utf-8"))
