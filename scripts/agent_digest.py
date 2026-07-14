@@ -13,7 +13,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from html import escape
 from urllib.request import urlopen, Request
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 # ==================== 配置 ====================
 SMTP_SERVER = "smtp.qq.com"
@@ -41,12 +41,14 @@ SEARCH_QUERIES = [
     # ===== Agent 热门综合 =====
     "ai agent sort:stars",
     "llm agent tool",
-    # ===== Python 热门（新增） =====
+    # ===== Python & 后端框架 =====
     "topic:python sort:stars",
-    "python framework stars:>5000",
-    "python tools stars:>3000",
+    "topic:python created:>2024-01-01 sort:stars",
+    "python library stars:>1000",
     "topic:fastapi sort:stars",
-    "python async stars:>2000",
+    "topic:django sort:stars",
+    "topic:flask sort:stars",
+    "backend framework ORM python stars:>500",
     # ===== GitHub 总榜热门（新增） =====
     "stars:>10000 pushed:>2026-06-01",
     "topic:hacktoberfest sort:stars",
@@ -88,6 +90,29 @@ def search_github(query: str, sort: str = "stars", order: str = "desc", per_page
 def fetch_trending_topic(topic: str, limit: int = 8):
     """按 topic 获取热门仓库"""
     return search_github(f"topic:{topic} sort:stars", per_page=limit)
+
+
+# ==================== 翻译 ====================
+_translate_cache = {}
+
+def translate_text(text: str) -> str:
+    """Google 免费翻译 API，英→中，带缓存"""
+    if not text or text == "无描述":
+        return text
+    if text in _translate_cache:
+        return _translate_cache[text]
+    try:
+        url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=" + quote(text)
+        req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        # 提取翻译结果
+        result = "".join(part[0] for part in data[0] if part[0])
+        _translate_cache[text] = result.strip() if result.strip() else text
+        return _translate_cache[text]
+    except Exception:
+        _translate_cache[text] = text  # 翻译失败用原文
+        return text
 
 
 # ==================== 构建邮件 ====================
@@ -192,7 +217,7 @@ def build_html() -> str:
 """)
         for repo in repos[:12]:  # 每类最多12个
             name = repo["full_name"]
-            desc = (repo.get("description") or "无描述").strip()
+            desc = translate_text((repo.get("description") or "无描述").strip())
             stars = repo["stargazers_count"]
             lang = repo.get("language") or "-"
             url = repo["html_url"]
@@ -220,9 +245,9 @@ def build_html() -> str:
     html_parts.append(f"""
 <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #ddd; font-size: 12px; color: #888; text-align: center;">
     <p>由 GitHub Actions 自动生成 · 每周一早 8:00 UTC 发送</p>
-    <p>数据来源：<a href="https://github.com/search" style="color: #0969da;">GitHub Search API</a></p>
+    <p>数据来源：<a href="https://github.com/search" style="color: #0969da;">GitHub Search API</a> + <a href="https://translate.googleapis.com" style="color: #0969da;">Google 翻译</a></p>
     <p style="margin-top: 4px;">
-        <a href="https://github.com/yuanhao/RAG_BasicDocMind" style="color: #0969da;">源代码</a>
+        <a href="https://github.com/17844yhs/RAG_BasicDocMind" style="color: #0969da;">源代码</a>
     </p>
 </div>
 </body></html>""")
